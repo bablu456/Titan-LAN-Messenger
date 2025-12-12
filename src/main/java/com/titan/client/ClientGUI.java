@@ -1,41 +1,53 @@
 package com.titan.client;
 
+import com.titan.common.Message;
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.KeyAdapter;
-import java.awt.event.KeyEvent;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.util.Set;
 
 public class ClientGUI extends JFrame {
     private JTextArea messageArea;
     private JTextField inputField;
+    private JList<String> userList; // Sidebar Component
+    private DefaultListModel<String> listModel; // Data for Sidebar
     private ChatClient client;
     private String userName;
+    private String currentTarget = null; // null = Broadcast, Name = Private
 
     public ClientGUI() {
         super("Titan Messenger");
-        setSize(500, 500);
+        setSize(700, 500); // Thoda chouda kiya
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+
+        userName = JOptionPane.showInputDialog(this, "Enter Name:");
+        if (userName == null) System.exit(0);
+        setTitle("Logged in as: " + userName);
+
         initComponents();
 
-        userName = JOptionPane.showInputDialog(this, "Enter your name:");
-        if (userName == null || userName.trim().isEmpty()) System.exit(0);
-        setTitle("Titan Messenger - Connected as: " + userName);
-
-        client = new ChatClient(message -> {
-            SwingUtilities.invokeLater(() -> {
-                messageArea.append(message + "\n");
-                messageArea.setCaretPosition(messageArea.getDocument().getLength());
-            });
-        });
+        // LOGIC INITIALIZATION
+        client = new ChatClient(
+                // 1. Handle Chat Message
+                msg -> SwingUtilities.invokeLater(() -> {
+                    String prefix = (msg.targetUser() == null) ? "[Public] " : "[Private] ";
+                    if("FILE".equals(msg.type())) {
+                        saveFile(msg); // Niche helper method hai
+                        messageArea.append(prefix + msg.sender() + ": Sent a file -> " + msg.fileName() + "\n");
+                    } else {
+                        messageArea.append(prefix + msg.sender() + ": " + msg.content() + "\n");
+                    }
+                }),
+                // 2. Handle User List Update
+                users -> SwingUtilities.invokeLater(() -> updateSidebar(users))
+        );
 
         try {
             client.connect(userName);
-            messageArea.append("[SYSTEM]: Connected to Server.\n");
         } catch (IOException e) {
-            JOptionPane.showMessageDialog(this, "Server not found!");
-            System.exit(1);
+            e.printStackTrace();
         }
         setVisible(true);
     }
@@ -43,59 +55,72 @@ public class ClientGUI extends JFrame {
     private void initComponents() {
         setLayout(new BorderLayout());
 
-        messageArea = new JTextArea();
-        messageArea.setEditable(false);
-        messageArea.setFont(new Font("Monospaced", Font.PLAIN, 14));
-        messageArea.setBackground(new Color(30, 30, 30));
-        messageArea.setForeground(Color.WHITE);
-        add(new JScrollPane(messageArea), BorderLayout.CENTER);
-
-        JPanel bottomPanel = new JPanel(new BorderLayout());
-
-        inputField = new JTextField();
-        inputField.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        inputField.addKeyListener(new KeyAdapter() {
-            @Override
-            public void keyPressed(KeyEvent e) {
-                if (e.getKeyCode() == KeyEvent.VK_ENTER) sendMessage();
+        // --- LEFT: SIDEBAR (User List) ---
+        listModel = new DefaultListModel<>();
+        userList = new JList<>(listModel);
+        userList.setBackground(new Color(230, 240, 255));
+        userList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        // Click Listener
+        userList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                currentTarget = userList.getSelectedValue();
+                // Khud ko select mat karne dena
+                if (userName.equals(currentTarget)) currentTarget = null;
+                inputField.setToolTipText(currentTarget == null ? "Broadcast" : "Private to: " + currentTarget);
             }
         });
 
-        // --- NEW: Buttons Panel ---
-        JPanel buttonsPanel = new JPanel(new FlowLayout());
+        JScrollPane sidebarScroll = new JScrollPane(userList);
+        sidebarScroll.setPreferredSize(new Dimension(150, 0));
+        sidebarScroll.setBorder(BorderFactory.createTitledBorder("Online Users"));
+        add(sidebarScroll, BorderLayout.WEST);
 
+        // --- CENTER: CHAT AREA ---
+        messageArea = new JTextArea();
+        messageArea.setEditable(false);
+        add(new JScrollPane(messageArea), BorderLayout.CENTER);
+
+        // --- BOTTOM: INPUT ---
+        JPanel bottomPanel = new JPanel(new BorderLayout());
+        inputField = new JTextField();
         JButton sendButton = new JButton("Send");
+
         sendButton.addActionListener(e -> sendMessage());
-
-        JButton fileButton = new JButton("📎 Attach"); // File Button
-        fileButton.addActionListener(e -> selectFile());
-
-        buttonsPanel.add(fileButton);
-        buttonsPanel.add(sendButton);
+        inputField.addActionListener(e -> sendMessage()); // Enter key logic
 
         bottomPanel.add(inputField, BorderLayout.CENTER);
-        bottomPanel.add(buttonsPanel, BorderLayout.EAST);
+        bottomPanel.add(sendButton, BorderLayout.EAST);
         add(bottomPanel, BorderLayout.SOUTH);
+    }
+
+    private void updateSidebar(Set<String> users) {
+        listModel.clear();
+        listModel.addElement("Broadcast (Click here)"); // Default option
+        for (String user : users) {
+            if (!user.equals(userName)) listModel.addElement(user);
+        }
     }
 
     private void sendMessage() {
         String content = inputField.getText();
-        if (!content.trim().isEmpty()) {
-            client.sendMessage(userName, content);
-            inputField.setText("");
-        }
+        if (content.isEmpty()) return;
+
+        // Agar "Broadcast" selected hai ya null hai
+        String target = (currentTarget != null && !currentTarget.contains("Broadcast")) ? currentTarget : null;
+
+        Message msg = new Message(userName, "CHAT", content, target);
+        client.sendMessage(msg);
+        inputField.setText("");
     }
 
-    // --- NEW: File Chooser Logic ---
-    private void selectFile() {
-        JFileChooser fileChooser = new JFileChooser();
-        int returnValue = fileChooser.showOpenDialog(this);
-
-        if (returnValue == JFileChooser.APPROVE_OPTION) {
-            File selectedFile = fileChooser.getSelectedFile();
-            // Client logic ko bolo file bhejne ko
-            client.sendFile(userName, selectedFile);
-        }
+    // Helper to save file (Same as before, just added for compilation)
+    private void saveFile(Message msg) {
+        try {
+            File dir = new File("received_files");
+            if (!dir.exists()) dir.mkdir();
+            File file = new File(dir, System.currentTimeMillis() + "_" + msg.fileName());
+            Files.write(file.toPath(), msg.fileData());
+        } catch(IOException e) { e.printStackTrace(); }
     }
 
     public static void main(String[] args) {

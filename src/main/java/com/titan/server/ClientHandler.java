@@ -1,63 +1,53 @@
 package com.titan.server;
 
 import com.titan.common.Message;
-import java.io.IOException;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
+import java.io.*;
 import java.net.Socket;
 
 public class ClientHandler implements Runnable {
-
-    private Socket clientSocket;
+    private Socket socket;
     private ObjectOutputStream out;
     private ObjectInputStream in;
+    private String clientName; // Is client ka naam store karenge
 
     public ClientHandler(Socket socket) {
-        this.clientSocket = socket;
+        this.socket = socket;
     }
 
     @Override
     public void run() {
         try {
-            // Streams setup
-            out = new ObjectOutputStream(clientSocket.getOutputStream());
-            in = new ObjectInputStream(clientSocket.getInputStream());
+            out = new ObjectOutputStream(socket.getOutputStream());
+            in = new ObjectInputStream(socket.getInputStream());
 
-            // --- CONTINUOUS LOOP ---
+            // 1. PEHLA MESSAGE: Sirf naam register karne ke liye
+            Message firstMsg = (Message) in.readObject();
+            this.clientName = firstMsg.sender();
+
+            // Server Map mein add karo
+            ServerMain.addClient(clientName, this);
+
+            // 2. MAIN LOOP
             while (true) {
-                // Ye line wait karegi jab tak naya message na aaye
-                Message messageFromClient = (Message) in.readObject();
+                Message msg = (Message) in.readObject();
 
-                System.out.println("[SERVER] " + messageFromClient.sender() + ": " + messageFromClient.content());
+                if ("EXIT".equalsIgnoreCase(msg.content())) break;
 
-                // Agar client "EXIT" bole, toh loop todo
-                if (messageFromClient.content().equalsIgnoreCase("exit")) {
-                    break;
-                }
-
-                // Khud reply karne ki jagah, ab hum BROADCAST karenge
-                ServerMain.broadcast(messageFromClient, this);
+                // Server ko bolo route karne ko
+                ServerMain.routeMessage(msg);
             }
 
         } catch (IOException | ClassNotFoundException e) {
-            // Error tab aayega jab client abruptly disconnect kar dega
-            System.err.println("Client Disconnected unexpectedly.");
+            // Connection lost
         } finally {
-            // CLEANUP CODE
-            ServerMain.removeClient(this);
-            try {
-                if (clientSocket != null) clientSocket.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            ServerMain.removeClient(clientName);
         }
     }
 
-    // Ye helper method ServerMain use karega message bhejne ke liye
     public void sendMessage(Message msg) {
         try {
             out.writeObject(msg);
-            out.flush(); // Ensure karo data buffer mein na phase, turant jaye
+            out.flush();
         } catch (IOException e) {
             e.printStackTrace();
         }

@@ -4,49 +4,52 @@ import com.titan.common.Message;
 import java.io.*;
 import java.net.Socket;
 import java.nio.file.Files;
+import java.util.Set;
 import java.util.function.Consumer;
 
 public class ChatClient {
     private String serverAddress = "127.0.0.1";
     private int port = 5000;
-    private Socket socket;
     private ObjectOutputStream out;
     private ObjectInputStream in;
-    private Consumer<String> onMessageReceived;
 
-    public ChatClient(Consumer<String> onMessageReceived) {
+    // Listeners for GUI updates
+    private Consumer<Message> onMessageReceived;
+    private Consumer<Set<String>> onUserListUpdate;
+
+    public ChatClient(Consumer<Message> onMessageReceived, Consumer<Set<String>> onUserListUpdate) {
         this.onMessageReceived = onMessageReceived;
+        this.onUserListUpdate = onUserListUpdate;
     }
 
     public void connect(String name) throws IOException {
-        socket = new Socket(serverAddress, port);
+        Socket socket = new Socket(serverAddress, port);
         out = new ObjectOutputStream(socket.getOutputStream());
         in = new ObjectInputStream(socket.getInputStream());
 
+        // Join message bhejo
+        sendMessage(new Message(name, "JOIN", "Joining", null));
+
+        // Listener Thread
         new Thread(() -> {
             try {
                 while (true) {
                     Message msg = (Message) in.readObject();
 
-                    if ("FILE".equals(msg.type())) {
-                        // Agar file aayi hai, toh save karo
-                        saveFile(msg);
-                        onMessageReceived.accept("[" + msg.sender() + "]: Shared a file -> " + msg.fileName());
+                    if ("USER_LIST".equals(msg.type())) {
+                        onUserListUpdate.accept(msg.activeUsers());
                     } else {
-                        // Normal Text
-                        onMessageReceived.accept("[" + msg.sender() + "]: " + msg.content());
+                        onMessageReceived.accept(msg);
                     }
                 }
-            } catch (IOException | ClassNotFoundException e) {
-                onMessageReceived.accept("[SYSTEM]: Connection Lost.");
+            } catch (Exception e) {
+                e.printStackTrace();
             }
         }).start();
     }
 
-    public void sendMessage(String name, String content) {
+    public void sendMessage(Message msg) {
         try {
-            // Constructor 1 use hoga (Text wala)
-            Message msg = new Message(name, "CHAT", content);
             out.writeObject(msg);
             out.flush();
         } catch (IOException e) {
@@ -54,34 +57,16 @@ public class ChatClient {
         }
     }
 
-    // --- NEW: Send File Logic ---
+    // --- YE RAHA WO MISSING METHOD (With Fix) ---
     public void sendFile(String name, File file) {
         try {
             byte[] fileBytes = Files.readAllBytes(file.toPath());
-            // Constructor 2 use hoga (File wala)
-            Message msg = new Message(name, "FILE", file.getName(), fileBytes);
+
+            // Yahan humne Ambiguity fix kar di hai (Swap: fileBytes pehle)
+            Message msg = new Message(name, "FILE", fileBytes, file.getName());
+
             out.writeObject(msg);
             out.flush();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    // --- NEW: Save Received File ---
-    private void saveFile(Message msg) {
-        try {
-            // Project folder mein 'received_files' naam ka folder banayega
-            File dir = new File("received_files");
-            if (!dir.exists()) dir.mkdir();
-
-            // File wahan save karega (Duplicate naam se bachega using System time)
-            File fileToSave = new File(dir, System.currentTimeMillis() + "_" + msg.fileName());
-
-            FileOutputStream fileOut = new FileOutputStream(fileToSave);
-            fileOut.write(msg.fileData());
-            fileOut.close();
-
-            System.out.println("File saved at: " + fileToSave.getAbsolutePath());
         } catch (IOException e) {
             e.printStackTrace();
         }
