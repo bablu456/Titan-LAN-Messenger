@@ -45,3 +45,5 @@ public record Message(
     String content,     // Text Payload
     byte[] fileData     // Binary Payload
 ) implements Serializable {}
+<img width="1919" height="1079" alt="Screenshot 2025-12-13 124624" src="https://github.com/user-attachments/assets/6f6bbc9f-705f-4056-86b6-11fd419894c0" />
+
